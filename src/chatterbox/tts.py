@@ -212,17 +212,10 @@ class ChatterboxTTS:
         
         t3.to(device).eval()
 
-        # Load quantized S3Gen model
-        s3gen_path = ckpt_dir / "s3gen_int8.pt"
-        if s3gen_path.exists():
-            print("Loading quantized S3Gen model...")
-            s3gen, _ = load_quantized_model(S3Gen, str(s3gen_path), device)
-        else:
-            # Fallback to regular model
-            print("Quantized S3Gen not found, loading regular model...")
-            s3gen = S3Gen()
-            s3gen.load_state_dict(load_file(ckpt_dir / "s3gen.safetensors"), strict=False)
-        
+        # Load S3Gen model (NOT quantized - always use original)
+        print("Loading original S3Gen model...")
+        s3gen = S3Gen()
+        s3gen.load_state_dict(load_file(ckpt_dir / "s3gen.safetensors"), strict=False)
         s3gen.to(device).eval()
 
         tokenizer = EnTokenizer(str(ckpt_dir / "tokenizer.json"))
