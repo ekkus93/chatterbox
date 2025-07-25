@@ -79,16 +79,38 @@ def load_quantized_model(model_class, load_path: str, device='cpu'):
     """Load a quantized model"""
     checkpoint = torch.load(load_path, map_location=device, weights_only=False)
     
-    # Initialize the model (assuming it has quantized layers)
-    if 'hp' in checkpoint:
-        model = model_class(checkpoint['hp'])
+    # Handle PyTorch dynamic quantization format (model object directly saved)
+    if isinstance(checkpoint, torch.nn.Module):
+        print(f"Loading PyTorch dynamic quantized model from: {load_path}")
+        
+        # Restore the device property that gets lost during serialization
+        def device_property(self):
+            try:
+                return self.speech_head.weight().device
+            except:
+                # Fallback: find any parameter and return its device
+                for param in self.parameters():
+                    if torch.is_tensor(param):
+                        return param.device
+                return torch.device('cpu')
+        
+        # Override the device property on the class
+        checkpoint.__class__.device = property(device_property)
+        
+        return checkpoint, {'method': 'pytorch_dynamic_quantization'}
+    
+    # Handle custom quantization format (original logic)
     else:
-        model = model_class()
-    
-    # Load the state dict
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
-    print(f"Loaded quantized model from: {load_path}")
-    print(f"Quantized layers: {checkpoint['quantization_info']['quantized_layers']}")
-    
-    return model, checkpoint.get('quantization_info', {})
+        # Initialize the model (assuming it has quantized layers)
+        if 'hp' in checkpoint:
+            model = model_class(checkpoint['hp'])
+        else:
+            model = model_class()
+        
+        # Load the state dict
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        print(f"Loaded custom quantized model from: {load_path}")
+        print(f"Quantized layers: {checkpoint['quantization_info']['quantized_layers']}")
+        
+        return model, checkpoint.get('quantization_info', {})
