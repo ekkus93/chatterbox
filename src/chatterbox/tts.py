@@ -14,6 +14,7 @@ from .models.s3gen import S3GEN_SR, S3Gen
 from .models.tokenizers import EnTokenizer
 from .models.voice_encoder import VoiceEncoder
 from .models.t3.modules.cond_enc import T3Cond
+from .quantization import load_quantized_model
 
 
 REPO_ID = "ResembleAI/chatterbox"
@@ -178,6 +179,59 @@ class ChatterboxTTS:
             local_path = hf_hub_download(repo_id=REPO_ID, filename=fpath)
 
         return cls.from_local(Path(local_path).parent, device)
+
+    @classmethod
+    def from_local_quantized(cls, ckpt_dir, device) -> 'ChatterboxTTS':
+        """Load quantized models from local directory"""
+        ckpt_dir = Path(ckpt_dir)
+
+        # Always load to CPU first for non-CUDA devices
+        if device in ["cpu", "mps"]:
+            map_location = torch.device('cpu')
+        else:
+            map_location = None
+
+        # Load voice encoder (usually not quantized)
+        ve = VoiceEncoder()
+        ve.load_state_dict(load_file(ckpt_dir / "ve.safetensors"))
+        ve.to(device).eval()
+
+        # Load quantized T3 model
+        t3_path = ckpt_dir / "t3_cfg_int8.pt"
+        if t3_path.exists():
+            print("Loading quantized T3 model...")
+            t3, _ = load_quantized_model(T3, str(t3_path), device)
+        else:
+            # Fallback to regular model
+            print("Quantized T3 not found, loading regular model...")
+            t3 = T3()
+            t3_state = load_file(ckpt_dir / "t3_cfg.safetensors")
+            if "model" in t3_state.keys():
+                t3_state = t3_state["model"][0]
+            t3.load_state_dict(t3_state)
+        
+        t3.to(device).eval()
+
+        # Load quantized S3Gen model
+        s3gen_path = ckpt_dir / "s3gen_int8.pt"
+        if s3gen_path.exists():
+            print("Loading quantized S3Gen model...")
+            s3gen, _ = load_quantized_model(S3Gen, str(s3gen_path), device)
+        else:
+            # Fallback to regular model
+            print("Quantized S3Gen not found, loading regular model...")
+            s3gen = S3Gen()
+            s3gen.load_state_dict(load_file(ckpt_dir / "s3gen.safetensors"), strict=False)
+        
+        s3gen.to(device).eval()
+
+        tokenizer = EnTokenizer(str(ckpt_dir / "tokenizer.json"))
+
+        conds = None
+        if (builtin_voice := ckpt_dir / "conds.pt").exists():
+            conds = Conditionals.load(builtin_voice, map_location=map_location).to(device)
+
+        return cls(t3, s3gen, ve, tokenizer, device, conds=conds)
 
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
         ## Load reference wav
